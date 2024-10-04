@@ -1,43 +1,18 @@
 {
-  "name": "x-asena",
-  "version": "2.0.0",
-  "description": "WhatsAsena project - a Whatsapp userbot helping to improve your Whatsapp experience.",
-  "main": "./bot.js",
-  "scripts": {
-    "start": "node bot.js"
+  "name": "Hotaro-md",
+  "version": "1.0.0",
+  "description": "Multifunctional WhatsApp bot based on X-Asena written in Baileys and Javascript.",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Neeraj-x0/x-asena.git"
-  },
-  "keywords": [
-    "whatsapp",
-    "bot",
-    "ai",
-    "asena",
-    "api",
-    "unlimited",
-    "asenadev",
-    "machine learning",
-    "automatic",
-    "whatsapp web",
-    "whatsapp api",
-    "WhatsAsena"
-  ],
-  "author": "X-Electra",
-  "developer": "X-Electra / Neeraj-x0",
-  "license": "GPL-3.0-or-later",
-  "bugs": {
-    "url": "https://github.com/Neeraj-x0/x-asena/issues"
-  },
-  "homepage": "https://github.com/Neeraj-x0/x-asena#readme",
   "dependencies": {
     "@adiwajshing/keyed-db": "^0.2.4",
     "@google/generative-ai": "^0.5.0",
     "@hapi/boom": "^10.0.1",
     "@neeraj-x0/nodetoolkit": "^1.0.3",
     "@vitalets/google-translate-api": "^9.2.0",
-    "@whiskeysockets/baileys": "6.6.0",
+    "@whiskeysockets/baileys": "^6.7.2",
     "acrcloud": "^1.4.0",
     "aptoide-scraper": "^1.0.1",
     "axios": "^1.7.2",
@@ -79,5 +54,23 @@
     "spotifydl-core": "^0.2.0",
     "sqlite3": "^5.1.7",
     "ytsr": "^3.8.4"
-  }
+  },
+  "scripts": {
+    "start": "node --max-old-space-size=4096 index.js",
+    "log": "pm2 start index.js --name hotaro-md && pm2 logs hotaro-md"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anonphoenix007/HOTARO-MD.git"
+  },
+  "keywords": [
+    "bot",
+    "whatsapp"
+  ],
+  "author": "Taira Makino",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/anonphoenix007/Hotaro-md/issues"
+  },
+  "homepage": "https://github.com/anonphoenix007/hotaro-md#readme"
 }
