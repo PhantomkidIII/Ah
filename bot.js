@@ -1,193 +1,184 @@
-
-
-const {
-  default: makeWASocket,
-  Browsers,
-  makeInMemoryStore,
-  useMultiFileAuthState,
-} = require("@adiwajshing/baileys");
-const singleToMulti = require("./lib/singleToMulti");
-const fs = require("fs");
-const { serialize } = require("./lib/serialize");
-const { Message, Image, Sticker } = require("./lib/Base");
 const pino = require("pino");
-const path = require("path");
-const events = require("./lib/event");
-const got = require("got");
+const fs = require("fs");
+const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, DisconnectReason } = require("@whiskeysockets/baileys");
+const { PausedChats } = require("./database");
 const config = require("./config");
-const { PluginDB } = require("./lib/database/plugins");
-const Greetings = require("./lib/Greetings");
-const { MakeSession } = require("./lib/session");
-const store = makeInMemoryStore({
-  logger: pino().child({ level: "silent", stream: "store" }),
+const plugins = require("./plugins");
+const { serialize, Greetings } = require("./index");
+const { Image, Message, Sticker, Video, AllMessage } = require("./Messages");
+const { loadMessage, saveMessage, saveChat, getName } = require("./database/StoreDb");
+
+const logger = pino({
+  "level": "silent"
 });
-async function Singmulti() {
-  await MakeSession(config.SESSION_ID,__dirname+'/session.json')
-  const { state } = await useMultiFileAuthState(__dirname + "/session");
-  await singleToMulti("session.json", __dirname + "/session", state);
-}
-Singmulti()
-require("events").EventEmitter.defaultMaxListeners = 0;
 
+const connect = async () => {
+  const startSocket = async () => {
+    try {
+      let sessionPath = __dirname + "/session/creds.json";
+      
+      // Ensure session directory and creds.json exist
+      if (!fs.existsSync(__dirname + "/session")) {
+        fs.mkdirSync(__dirname + "/session");
+      }
 
-fs.readdirSync(__dirname + "/lib/database/").forEach((plugin) => {
-  if (path.extname(plugin).toLowerCase() == ".js") {
-    require(__dirname + "/lib/database/" + plugin);
-  }
-});
-async function Xasena() {
-  const { state ,saveCreds} = await useMultiFileAuthState(__dirname + "/session");
-  console.log("Syncing Database");
-  await config.DATABASE.sync();
-  let conn = makeWASocket({
-    logger: pino({ level: "silent" }),
-    auth: state,
-    printQRInTerminal: true,
-    generateHighQualityLinkPreview: true,
-    browser: Browsers.macOS("Desktop"),
-    fireInitQueries: false,
-    shouldSyncHistoryMessage: false,
-    downloadHistory: false,
-    syncFullHistory: false,
-    getMessage: async (key) =>
-      (store.loadMessage(key.id) || {}).message || {
-        conversation: null,
-      },
-  });
-  store.bind(conn.ev);
-  setInterval(() => {
-    store.writeToFile("./database/store.json");
-  }, 30 * 60 * 1000);
+      if (!fs.existsSync(sessionPath)) {
+        // Write SESSION_ID from config to creds.json
+        await fs.writeFileSync(sessionPath, JSON.stringify({ session: config.SESSION_ID }));
+      }
 
-  conn.ev.on("creds.update", saveCreds);
+      // Use multi-file auth state from session directory
+      const { state: authState, saveCreds } = await useMultiFileAuthState(__dirname + "/session/");
 
-  conn.ev.on("connection.update", async (s) => {
-    const { connection, lastDisconnect } = s;
-    if (connection === "connecting") {
-      console.log("X-Asena");
-      console.log("ℹ️ Connecting to WhatsApp... Please Wait.");
-    }
-    if (connection === "open") {
-      console.log("✅ Login Successful!");
-      console.log("⬇️ Installing External Plugins...");
+      let sock = makeWASocket({
+        "version": [2, 3065, 13],  // Update version based on current requirements
+        "auth": authState,
+        "printQRInTerminal": true,
+        "logger": logger,
+        "browser": Browsers.macOS("Desktop"),
+        "downloadHistory": false,
+        "syncFullHistory": false,
+        "markOnlineOnConnect": false,
+        "emitOwnEvents": true,
+        "getMessage": async (key) => (loadMessage(key.id) || {}).message || { "conversation": null }
+      });
 
-      let plugins = await PluginDB.findAll();
-      plugins.map(async (plugin) => {
-        if (!fs.existsSync("./plugins/" + plugin.dataValues.name + ".js")) {
-          console.log(plugin.dataValues.name);
-          var response = await got(plugin.dataValues.url);
-          if (response.statusCode == 200) {
-            fs.writeFileSync(
-              "./plugins/" + plugin.dataValues.name + ".js",
-              response.body
-            );
-            require(__dirname + "/plugins/" + plugin.dataValues.name + ".js");
+      sock.ev.on("connection.update", async (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === "connecting") {
+          console.log("ℹ Connecting to WhatsApp... Please Wait.");
+        }
+        if (connection === "open") {
+          console.log("✅ Login to WhatsApp Successful!");
+          const version = require("./package.json").version;
+          const commandCount = plugins.commands.length;
+          const mode = config.WORK_TYPE;
+          const welcomeMessage = `
+          *╭═══════════════ ⪩*
+          *╰╮╰┈➤* *☬ QUEEN ALYA ☬*
+          *╭═══════════════ ⪩*
+          *┃ Version:* ${version}
+          *┃ Plugins:* ${commandCount}
+          *┃ MODE:* ${mode}
+          *┃ PREFIX:* ${config.HANDLERS}
+          *┃ MODS:* ${config.SUDO}
+          *╰════════════════ ⪨*
+          `;
+          sock.sendMessage(sock.user.id, { "text": welcomeMessage });
+        }
+        if (connection === "close") {
+          if (lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) {
+            await delay(300);
+            startSocket();
+            console.log("Reconnecting...");
+          } else {
+            console.log("Connection closed. Device logged out.");
+            await delay(3000);
+            process.exit(0);
           }
         }
       });
 
-      console.log("⬇️  Installing Plugins...");
-
-      fs.readdirSync(__dirname + "/plugins").forEach((plugin) => {
-        if (path.extname(plugin).toLowerCase() == ".js") {
-          require(__dirname + "/plugins/" + plugin);
-        }
+      sock.ev.on("creds.update", saveCreds);
+      sock.ev.on("group-participants.update", async (update) => Greetings(update, sock));
+      sock.ev.on("chats.update", async (chats) => {
+        chats.forEach(async (chat) => await saveChat(chat));
       });
-      console.log("✅ Plugins Installed!");
-      let str = `\`\`\`X-asena connected \nversion : ${
-        require(__dirname + "/package.json").version
-      }\nTotal Plugins : ${events.commands.length}\nWorktype: ${
-        config.WORK_TYPE
-      }\`\`\``;
-      conn.sendMessage(conn.user.id, { text: str });
+      sock.ev.on("messages.upsert", async (messageUpdate) => {
+        if (messageUpdate.type !== "notify") return;
 
-      try {
-        conn.ev.on("group-participants.update", async (data) => {
-          Greetings(data, conn);
-        });
-        conn.ev.on("messages.upsert", async (m) => {
-          if (m.type !== "notify") return;
-          const ms = m.messages[0];
-          let msg = await serialize(JSON.parse(JSON.stringify(ms)), conn);
-          if (!msg.message) return;
-          if (msg.body[1] && msg.body[1] == " ")
-            msg.body = msg.body[0] + msg.body.slice(2);
-          let text_msg = msg.body;
-          if (text_msg && config.LOGS)
-            console.log(
-              `At : ${
-                msg.from.endsWith("@g.us")
-                  ? (await conn.groupMetadata(msg.from)).subject
-                  : msg.from
-              }\nFrom : ${msg.sender}\nMessage:${text_msg}`
-            );
+        let messageData = await serialize(JSON.parse(JSON.stringify(messageUpdate.messages[0])), sock);
+        await saveMessage(messageUpdate.messages[0], messageData.sender);
 
-          events.commands.map(async (command) => {
-            if (
-              command.fromMe &&
-              !config.SUDO.split(",").includes(
-                msg.sender.split("@")[0] || !msg.isSelf
-              )
-            )
-              return;
-            let comman;
-            if (text_msg) {
-              comman = text_msg
-                ? text_msg[0] +
-                  text_msg.slice(1).trim().split(" ")[0].toLowerCase()
-                : "";
-              msg.prefix = new RegExp(config.HANDLERS).test(text_msg)
-                ? text_msg.split("").shift()
-                : ",";
-            }
-            if (command.pattern && command.pattern.test(comman)) {
-              var match;
+        if (config.AUTO_READ) {
+          await sock.readMessages(messageData.key);
+        }
+        if (config.AUTO_STATUS_READ && messageData.from === "status@broadcast") {
+          await sock.readMessages(messageData.key);
+        }
+
+        const messageBody = messageData.body;
+        if (!messageData) return;
+
+        const resumeRegex = new RegExp(config.HANDLERS + "( ?resume)", "is");
+        const isResume = resumeRegex.test(messageBody);
+        const chatId = messageData.from;
+
+        try {
+          const pausedChats = await PausedChats.getPausedChats();
+          if (pausedChats.some(paused => paused.chatId === chatId && !isResume)) return;
+        } catch (error) {
+          console.error(error);
+        }
+
+        if (config.LOGS) {
+          let senderName = await getName(messageData.sender);
+          console.log(`At: ${messageData.from.endsWith("@g.us") ? (await sock.groupMetadata(messageData.from)).subject : messageData.from}\nFrom: ${senderName}\nMessage: ${messageBody ? messageBody : messageData.type}`);
+        }
+
+        plugins.commands.map(async (cmd) => {
+          if (cmd.fromMe && !messageData.sudo) return;
+          messageData.prefix = new RegExp(config.HANDLERS).test(messageBody) ? messageBody[0].toLowerCase() : "!";
+          let parsedMessage;
+
+          switch (true) {
+            case cmd.pattern && cmd.pattern.test(messageBody):
               try {
-                match = text_msg.replace(new RegExp(comman, "i"), "").trim();
+                parsedMessage = messageBody.replace(new RegExp(cmd.pattern, "i"), '').trim();
               } catch {
-                match = false;
+                parsedMessage = false;
               }
-              whats = new Message(conn, msg, ms);
-              command.function(whats, match, msg, conn);
-            } else if (text_msg && command.on === "text") {
-              whats = new Message(conn, msg, ms);
-              command.function(whats, text_msg, msg, conn, m);
-            } else if (
-              (command.on === "image" || command.on === "photo") &&
-              msg.type === "imageMessage"
-            ) {
-              whats = new Image(conn, msg, ms);
-              command.function(whats, text_msg, msg, conn, m, ms);
-            } else if (
-              command.on === "sticker" &&
-              msg.type === "stickerMessage"
-            ) {
-              whats = new Sticker(conn, msg, ms);
-              command.function(whats, msg, conn, m, ms);
-            }
-          });
+              let commandMessage = new Message(sock, messageData);
+              cmd["function"](commandMessage, parsedMessage, messageData, sock);
+              break;
+            case messageBody && cmd.on === "text":
+              let textMessage = new Message(sock, messageData);
+              cmd["function"](textMessage, messageBody, messageData, sock, messageUpdate);
+              break;
+            case cmd.on === "image" && messageData.type === "imageMessage":
+              let imageMessage = new Image(sock, messageData);
+              cmd["function"](imageMessage, messageBody, messageData, sock, messageUpdate);
+              break;
+            case cmd.on === "sticker" && messageData.type === "stickerMessage":
+              let stickerMessage = new Sticker(sock, messageData);
+              cmd["function"](stickerMessage, messageData, sock, messageUpdate);
+              break;
+            case cmd.on === "video" && messageData.type === "videoMessage":
+              let videoMessage = new Video(sock, messageData);
+              cmd["function"](videoMessage, messageData, sock, messageUpdate);
+              break;
+            case cmd.on === "delete" && messageData.type === "protocolMessage":
+              let deletedMessage = new Message(sock, messageData);
+              deletedMessage.messageId = messageData.message.protocolMessage.key.id;
+              cmd["function"](deletedMessage, messageData, sock, messageUpdate);
+              break;
+            case cmd.on === "message":
+              let anyMessage = new AllMessage(sock, messageData);
+              cmd["function"](anyMessage, messageData, sock, messageUpdate);
+              break;
+            default:
+              break;
+          }
         });
-      } catch (e) {
-        console.log(e + "\n\n\n\n\n" + JSON.stringify(msg));
-      }
+      });
+
+      process.on("uncaughtException", async (err) => {
+        await sock.sendMessage(sock.user.id, { "text": err.message });
+        console.log(err);
+      });
+
+      return sock;
+    } catch (error) {
+      console.log(error);
     }
-    if (connection === "close") {
-      console.log(s)
-      console.log(
-        "Connection closed with bot. Please put New Session ID again."
-      );
-      Xasena().catch((err) => console.log(err));
-    } else {
-      /*
-       */
-    }
-  });
-  process.on("uncaughtException", (err) => {
-    let error = err.message;
-    // conn.sendMessage(conn.user.id, { text: error });
-    console.log(err);
-  });
-}
-setTimeout(() => {
-  Xasena().catch((err) => console.log(err));
-}, 3000);
+    return;
+  };
+
+  try {
+    await startSocket();
+  } catch (error) {
+    console.error("Connection error:", error);
+  }
+};
+
+module.exports = connect;
